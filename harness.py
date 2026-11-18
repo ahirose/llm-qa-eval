@@ -104,7 +104,7 @@ def run_eval(args, profiles, config, root, config_digest):
         print_comparison(summaries, log_path)
     else:
         print(json.dumps({"log": str(log_path), "profiles": summaries}, ensure_ascii=False, indent=2))
-    return int(any(item["errors"] for item in summaries.values()))
+    return summaries, log_path
 
 
 def matrix_profiles(parser, args, config):
@@ -174,7 +174,8 @@ def main():
         selected = matrix_profiles(parser, args, config)
     else:
         selected = {name: config["profiles"][name] for name in args.profiles}
-    return run_eval(args, selected, config, root, hashlib.sha256(raw).hexdigest())
+    summaries, _ = run_eval(args, selected, config, root, hashlib.sha256(raw).hexdigest())
+    return int(any(item["errors"] for item in summaries.values()))
 
 
 if __name__ == "__main__":

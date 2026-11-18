@@ -9,12 +9,45 @@ from unittest.mock import Mock, patch
 
 from evaluation import judge
 from harness import load_cases
+from recommend import choose
 from sources import retrieve
 
 ROOT = Path(__file__).resolve().parent
 
 
 class HarnessTests(unittest.TestCase):
+    def test_recommendation_requires_complete_coverage_and_breaks_score_ties(self):
+        profiles = {"incomplete": {"retrieval": {"mode": "external-search"}},
+                    "search": {"retrieval": {"mode": "external-search"}},
+                    "baseline": {"retrieval": {"mode": "none"}}}
+        summaries = {"incomplete": {"coverage": 0.5, "passed": 2, "mean_answer_ms": 1},
+                     "search": {"coverage": 1, "passed": 1, "mean_answer_ms": 1},
+                     "baseline": {"coverage": 1, "passed": 1, "mean_answer_ms": 2}}
+        self.assertEqual(choose(summaries, profiles), "baseline")
+        self.assertIsNone(choose({"incomplete": summaries["incomplete"]}, profiles))
+
+    def test_recommendation_runs_batch_without_references(self):
+        with tempfile.TemporaryDirectory() as directory:
+            logs = Path(directory)
+            recommendation = logs / "recommendation.json"
+            output = logs / "answers.jsonl"
+            for script, args in (
+                ("recommend.py", ["--dataset", "cases.jsonl", "--models", "mock_a", "mock_b",
+                                  "--logs", str(logs), "--output", str(recommendation)]),
+                ("answer_batch.py", ["--recommendation", str(recommendation),
+                                     "--questions", "questions.jsonl", "--output", str(output)]),
+            ):
+                result = subprocess.run([sys.executable, script, *args], cwd=ROOT,
+                                        capture_output=True, encoding="utf-8")
+                self.assertEqual(result.returncode, 0, result.stderr)
+            selection = json.loads(recommendation.read_text(encoding="utf-8"))["selection"]
+            answers = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(selection["rag"], "external")
+        self.assertEqual(len(answers), 2)
+        self.assertTrue(all(row["model_profile"] == selection["model"]
+                            and row["answer"] == "Report to security@example.invalid."
+                            for row in answers))
+
     def evaluate(self, dataset, profiles):
         logs = dataset.parent / "runs"
         result = subprocess.run(

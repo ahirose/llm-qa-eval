@@ -16,6 +16,21 @@ python harness.py eval --dataset cases.jsonl --profiles baseline direct search t
 
 ## モデル × RAG を一括比較する
 
+### 試験から回答リストを作る
+
+`recommend.py` は全組み合わせを採点し、比較結果と推奨設定を出力します。全件を採点できた組み合わせのうち、正答率が最も高いものを選びます。同率なら RAG なし、平均回答時間が短いもの、設定名順で決めます。全件を採点できた組み合わせがなければ、推奨設定は空になります。
+
+`answer_batch.py` は推奨設定と試験時と同じ TOML を読み込み、採点なしで質問に回答します。入力は `id` と `question` を持つ JSONL で、出力には質問と回答が入力順に並びます。失敗した質問にはエラー種別を記録します。既存の回答ファイルとの上書きを避けるため、再実行時は新しい出力ファイル名を指定します。
+
+```powershell
+python recommend.py --dataset cases.jsonl --models mock_a mock_b --rag none external --output runs/recommendation.json
+python answer_batch.py --recommendation runs/recommendation.json --questions questions.jsonl --output runs/answers.jsonl
+```
+
+実 API で使う場合は両方のコマンドに `--config live.local.toml` を追加します。試験側のモデル名は `--models openai claude` に変更します。
+
+### 比較結果だけを出す
+
 `compare` は、モデルと RAG 条件の全組み合わせを同じ質問セット・採点モデルで実行します。次のコマンドは2モデル × 2条件の4組を試します。
 
 ```powershell
