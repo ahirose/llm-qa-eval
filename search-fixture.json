@@ -1,0 +1,14 @@
+{
+  "Where should I report a suspected security incident?": [
+    {
+      "id": "policy.txt",
+      "text": "For a suspected security incident, report to security@example.invalid."
+    }
+  ],
+  "What email address should I use to report a suspected incident?": [
+    {
+      "id": "policy.txt",
+      "text": "For a suspected security incident, report to security@example.invalid."
+    }
+  ]
+}

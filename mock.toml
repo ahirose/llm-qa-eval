@@ -1,0 +1,22 @@
+[judge]
+provider = "mock"
+
+[profiles.baseline]
+model = { provider = "mock" }
+retrieval = { mode = "none" }
+mcp = { mode = "none" }
+
+[profiles.direct]
+model = { provider = "mock" }
+retrieval = { mode = "direct-file", files = ["policy.txt"] }
+mcp = { mode = "none" }
+
+[profiles.search]
+model = { provider = "mock" }
+retrieval = { mode = "fixture-search", path = "search-fixture.json", top_k = 3 }
+mcp = { mode = "none" }
+
+[profiles.tool]
+model = { provider = "mock" }
+retrieval = { mode = "none" }
+mcp = { mode = "fixture", tool = "lookup_policy", text = "Report to security@example.invalid." }

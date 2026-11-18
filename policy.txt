@@ -1,0 +1,1 @@
+For a suspected security incident, report to security@example.invalid.

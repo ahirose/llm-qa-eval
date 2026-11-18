@@ -1,0 +1,2 @@
+{"id":"incident-contact","question":"Where should I report a suspected security incident?","reference":"Report to security@example.invalid."}
+{"id":"incident-email","question":"What email address should I use to report a suspected incident?","reference":"security@example.invalid"}
