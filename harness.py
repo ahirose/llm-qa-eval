@@ -40,6 +40,9 @@ def load_cases(raw):
         raise ValueError("Dataset must contain nonempty id, question and reference strings")
     if len({case["id"] for case in cases}) != len(cases):
         raise ValueError("Dataset case IDs must be unique")
+    if any("group" in case and (not isinstance(case["group"], str) or not case["group"].strip())
+           for case in cases):
+        raise ValueError("Dataset group must be a nonempty string when provided")
     return cases
 
 
@@ -69,6 +72,8 @@ def run_eval(args, profiles, config, root, config_digest):
                        "retrieval": profile["retrieval"]["mode"], "mcp": profile["mcp"]["mode"],
                        "provider": profile["model"]["provider"],
                        "requested_model": profile["model"].get("id")}
+                if "group" in case:
+                    row["group"] = case["group"]
                 try:
                     reply, evidence = answer(profile, case["question"], root)
                     row.update(model=reply.model, usage=reply.usage, evidence=evidence,

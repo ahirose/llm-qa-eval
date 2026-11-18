@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from evaluation import judge
+from compare_stats import compare
 from harness import load_cases
 from recommend import choose
 from sources import retrieve
@@ -16,6 +17,46 @@ ROOT = Path(__file__).resolve().parent
 
 
 class HarnessTests(unittest.TestCase):
+    def test_paired_statistics_use_question_level_changes(self):
+        before = {str(i): {"passed": i < 70} for i in range(100)}
+        after = {str(i): {"passed": i < 65 or 70 <= i < 95} for i in range(100)}
+        result = compare(before, after, draws=2000, seed=42, margin=3)
+        self.assertEqual(result["pair_counts"], {"both_pass": 65, "improved": 25,
+                                               "worsened": 5, "both_fail": 5})
+        self.assertEqual(result["difference_pp"], 20)
+        self.assertAlmostEqual(result["mcnemar_exact_two_sided_p"], 0.0003249142318964)
+        low, high = result["bootstrap"]["ci95_pp"]
+        self.assertLess(0, low)
+        self.assertLess(low, 20)
+        self.assertGreater(high, 20)
+        self.assertEqual(result["noninferiority"]["status"], "met")
+
+    def test_grouped_log_and_incomplete_pairs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "cases.jsonl"
+            cases = [json.loads(line) for line in (ROOT / dataset.name).read_text(
+                encoding="utf-8").splitlines()]
+            dataset.write_text("\n".join(json.dumps(dict(case, group="same-policy"))
+                                         for case in cases), encoding="utf-8")
+            _, _, rows = self.evaluate(dataset, ["baseline", "direct"])
+            log = next((dataset.parent / "runs").glob("*.jsonl"))
+            command = [sys.executable, "compare_stats.py", "--log", str(log),
+                       "--baseline", "baseline", "--candidate", "direct", "--margin-pp", "3"]
+            result = subprocess.run(command, cwd=ROOT, check=True, capture_output=True, encoding="utf-8")
+            report = json.loads(result.stdout)
+            self.assertEqual(report["bootstrap"]["unit"], "group")
+            self.assertEqual(report["bootstrap"]["units"], 1)
+            self.assertIsNone(report["mcnemar_exact_two_sided_p"])
+            self.assertEqual(report["noninferiority"]["status"], "inconclusive")
+            del rows[1]["passed"]
+            rows[1]["error_stage"] = "judge"
+            log.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+            result = subprocess.run(command, cwd=ROOT, check=True, capture_output=True, encoding="utf-8")
+            report = json.loads(result.stdout)
+            self.assertEqual(report["paired_graded"], 1)
+            self.assertEqual(report["baseline"]["judge_errors"], 1)
+            self.assertIsNone(report["bootstrap"]["ci95_pp"])
+
     def test_recommendation_requires_complete_coverage_and_breaks_score_ties(self):
         profiles = {"incomplete": {"retrieval": {"mode": "external-search"}},
                     "search": {"retrieval": {"mode": "external-search"}},
