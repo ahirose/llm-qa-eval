@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+from itertools import product
 import sys
 import time
 import tomllib
@@ -60,6 +61,7 @@ def run_eval(args, profiles, config, root, config_digest):
                 "content_logged": args.log_content, "case_count": len(cases)})
         for name, profile in profiles.items():
             passed = failed = errors = 0
+            answer_times = []
             for case in cases:
                 stage = "answer"
                 started = time.perf_counter()
@@ -71,6 +73,7 @@ def run_eval(args, profiles, config, root, config_digest):
                     reply, evidence = answer(profile, case["question"], root)
                     row.update(model=reply.model, usage=reply.usage, evidence=evidence,
                                answer_ms=round((time.perf_counter() - started) * 1000))
+                    answer_times.append(row["answer_ms"])
                     if args.log_content:
                         row["answer"] = reply.text
                     stage = "judge"
@@ -92,9 +95,54 @@ def run_eval(args, profiles, config, root, config_digest):
             summaries[name] = {"passed": passed, "failed": failed, "errors": errors,
                                "total": len(cases), "pass_rate": passed / graded if graded else None,
                                "coverage": graded / len(cases)}
+            if args.command == "compare":
+                summaries[name]["mean_answer_ms"] = (
+                    round(sum(answer_times) / len(answer_times)) if answer_times else None
+                )
         record({"type": "summary", "profiles": summaries})
-    print(json.dumps({"log": str(log_path), "profiles": summaries}, ensure_ascii=False, indent=2))
+    if args.command == "compare":
+        print_comparison(summaries, log_path)
+    else:
+        print(json.dumps({"log": str(log_path), "profiles": summaries}, ensure_ascii=False, indent=2))
     return int(any(item["errors"] for item in summaries.values()))
+
+
+def matrix_profiles(parser, args, config):
+    matrix = config.get("matrix", {})
+    models = matrix.get("models", {})
+    retrievals = {"none": {"mode": "none"}} | matrix.get("retrievals", {})
+    if retrievals["none"]["mode"] != "none":
+        parser.error("matrix.retrievals.none is reserved for retrieval mode none")
+    for names, entries, option in (
+        (args.models, models, "--models"), (args.rag, retrievals, "--rag"),
+    ):
+        unknown = [name for name in names if name not in entries]
+        if unknown:
+            choices = ", ".join(entries) or "(none configured)"
+            parser.error(f"{option}: unknown {', '.join(unknown)}. Choose from {choices}")
+        if any("/" in name for name in names) or len(set(names)) != len(names):
+            parser.error(f"{option}: use unique names without '/'")
+    mcp = matrix.get("mcp", {"mode": "none"})
+    return {
+        f"{model}/{rag}": {"model": models[model], "retrieval": retrievals[rag], "mcp": mcp}
+        for model, rag in product(args.models, args.rag)
+    }
+
+
+def print_comparison(summaries, log_path):
+    rows = [("Model", "RAG", "Pass/graded", "Pass rate", "Coverage", "Errors", "Mean answer ms")]
+    for name, item in summaries.items():
+        model, rag = name.split("/")
+        graded = item["passed"] + item["failed"]
+        rate = f"{item['pass_rate']:.1%}" if graded else "-"
+        mean_ms = item["mean_answer_ms"]
+        rows.append((model, rag, f"{item['passed']}/{graded}", rate,
+                     f"{graded}/{item['total']}", str(item["errors"]),
+                     str(mean_ms) if mean_ms is not None else "-"))
+    widths = [max(map(len, column)) for column in zip(*rows)]
+    for row in rows:
+        print("  ".join(value.ljust(width) for value, width in zip(row, widths)).rstrip())
+    print(f"\nJSONL: {log_path}")
 
 
 def main():
@@ -106,9 +154,13 @@ def main():
     ask.add_argument("question")
     evaluate = commands.add_parser("eval")
     evaluate.add_argument("--profiles", nargs="+", required=True)
-    evaluate.add_argument("--dataset", type=Path, required=True)
-    evaluate.add_argument("--logs", type=Path, default=Path("runs"))
-    evaluate.add_argument("--log-content", action="store_true")
+    compare = commands.add_parser("compare", help="Evaluate every model and RAG combination")
+    compare.add_argument("--models", nargs="+", required=True, metavar="MODEL")
+    compare.add_argument("--rag", nargs="+", default=["none", "external"], metavar="RAG")
+    for command in (evaluate, compare):
+        command.add_argument("--dataset", type=Path, required=True)
+        command.add_argument("--logs", type=Path, default=Path("runs"))
+        command.add_argument("--log-content", action="store_true")
     args = parser.parse_args()
 
     raw = args.config.read_bytes()
@@ -118,7 +170,10 @@ def main():
         reply, _ = answer(config["profiles"][args.profile], args.question, root)
         print(reply.text)
         return 0
-    selected = {name: config["profiles"][name] for name in args.profiles}
+    if args.command == "compare":
+        selected = matrix_profiles(parser, args, config)
+    else:
+        selected = {name: config["profiles"][name] for name in args.profiles}
     return run_eval(args, selected, config, root, hashlib.sha256(raw).hexdigest())
 
 

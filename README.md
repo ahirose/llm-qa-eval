@@ -14,6 +14,24 @@ python harness.py eval --dataset cases.jsonl --profiles baseline direct search t
 
 モックの2問では baseline が 0/2、ほかの3方式が 2/2 になるよう設計しています。この結果は配線の確認用です。
 
+## モデル × RAG を一括比較する
+
+`compare` は、モデルと RAG 条件の全組み合わせを同じ質問セット・採点モデルで実行します。次のコマンドは2モデル × 2条件の4組を試します。
+
+```powershell
+python harness.py compare --dataset cases.jsonl --models mock_a mock_b --rag none external
+```
+
+実サービスでは、`live.local.toml` の `[matrix.models]` に比較するモデルの別名と ID、`[matrix.retrievals]` に検索や直接入力の設定を記入します。必要な環境変数と `[judge]` を設定して実行します。
+
+```powershell
+python harness.py --config live.local.toml compare --dataset cases.jsonl --models openai claude --rag none external
+```
+
+`--rag` の既定値は `none external` です。直接ファイル入力も並べるには `--rag none external direct` を指定します。MCP は既定で無効です。`[matrix.mcp]` を設定すると全組み合わせで同じツールを使います。
+
+端末には組み合わせごとの合格数、正答率、採点済み件数、エラー件数、平均回答時間が表示されます。平均回答時間には検索と MCP の時間を含み、回答を取得できたケースで集計します。ケース別の合否・使用量は同じ実行の JSONL で確認できます。
+
 ## 実サービスを接続する
 
 1. 仮想環境で `python -m pip install -r requirements.txt` を実行します。

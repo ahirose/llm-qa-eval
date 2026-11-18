@@ -39,6 +39,27 @@ class HarnessTests(unittest.TestCase):
             self.assertNotIn("reason", row)
             self.assertNotIn("question", row)
 
+    def test_compare_runs_every_model_and_rag_combination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            logs = Path(directory)
+            result = subprocess.run(
+                [sys.executable, "harness.py", "compare", "--dataset", "cases.jsonl",
+                 "--logs", str(logs), "--models", "mock_a", "mock_b", "--rag", "none", "external"],
+                cwd=ROOT, capture_output=True, encoding="utf-8",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Pass rate", result.stdout)
+            self.assertIn("Mean answer ms", result.stdout)
+            (log,) = logs.glob("*.jsonl")
+            rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        profiles = rows[-1]["profiles"]
+        self.assertEqual(list(profiles), ["mock_a/none", "mock_a/external",
+                                         "mock_b/none", "mock_b/external"])
+        self.assertEqual([item["passed"] for item in profiles.values()], [0, 2, 0, 2])
+        self.assertTrue(all(item["coverage"] == 1 for item in profiles.values()))
+        self.assertEqual({row["model"] for row in rows if row["type"] == "case"},
+                         {"fixture-a", "fixture-b"})
+
     def test_error_is_counted_separately(self):
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "cases.jsonl"

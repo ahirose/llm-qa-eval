@@ -20,3 +20,12 @@ mcp = { mode = "none" }
 model = { provider = "mock" }
 retrieval = { mode = "none" }
 mcp = { mode = "fixture", tool = "lookup_policy", text = "Report to security@example.invalid." }
+
+
+[matrix.models]
+mock_a = { provider = "mock", id = "fixture-a" }
+mock_b = { provider = "mock", id = "fixture-b" }
+
+[matrix.retrievals]
+external = { mode = "fixture-search", path = "search-fixture.json", top_k = 3 }
+direct = { mode = "direct-file", files = ["policy.txt"] }

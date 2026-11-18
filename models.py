@@ -25,7 +25,7 @@ def generate(config, system, prompt, files=()):
                        "security@example.invalid" in path.read_text(encoding="utf-8")
                        for path in files) or "security@example.invalid" in prompt
         return Reply("Report to security@example.invalid." if evidence else
-                     "I do not have the policy.", {}, "fixture")
+                     "I do not have the policy.", {}, config.get("id", "fixture"))
     model = config["id"]
     limit = config.get("max_tokens", 1024)
     if provider == "openai":
