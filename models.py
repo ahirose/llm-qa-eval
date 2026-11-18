@@ -1,5 +1,6 @@
 """Provider-specific input encoding and response normalization."""
 import base64
+import json
 import os
 from dataclasses import dataclass
 
@@ -21,11 +22,17 @@ def credential(name):
 def generate(config, system, prompt, files=()):
     provider = config["provider"]
     if provider == "mock":
-        evidence = any(path.suffix.lower() != ".pdf" and
-                       "security@example.invalid" in path.read_text(encoding="utf-8")
-                       for path in files) or "security@example.invalid" in prompt
-        return Reply("Report to security@example.invalid." if evidence else
-                     "I do not have the policy.", {}, config.get("id", "fixture"))
+        request = json.loads(prompt)
+        question_line = f"質問：{request['question']}"
+        documents = [path.read_text(encoding="utf-8-sig") for path in files
+                     if path.suffix.lower() != ".pdf"]
+        documents.extend(item["text"] for item in request["retrieval"] + request["mcp"])
+        for document in documents:
+            lines = document.splitlines()
+            for question, answer in zip(lines, lines[1:]):
+                if question == question_line and answer.startswith("回答："):
+                    return Reply(answer.removeprefix("回答："), {}, config.get("id", "fixture"))
+        return Reply("該当するポリシーを確認できませんでした。", {}, config.get("id", "fixture"))
     model = config["id"]
     limit = config.get("max_tokens", 1024)
     if provider == "openai":

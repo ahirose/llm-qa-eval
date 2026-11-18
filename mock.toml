@@ -19,7 +19,7 @@ mcp = { mode = "none" }
 [profiles.tool]
 model = { provider = "mock" }
 retrieval = { mode = "none" }
-mcp = { mode = "fixture", tool = "lookup_policy", text = "Report to security@example.invalid." }
+mcp = { mode = "fixture", tool = "lookup_policy", path = "policy.txt" }
 
 
 [matrix.models]

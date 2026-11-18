@@ -76,12 +76,13 @@ async def remote_tool(config, question):
     return text[:16000]
 
 
-def mcp_evidence(config, question):
+def mcp_evidence(config, question, root):
     mode = config["mode"]
     if mode == "none":
         return []
     if mode == "fixture":
-        text = config["text"]
+        text = ((root / config["path"]).read_text(encoding="utf-8-sig")
+                if "path" in config else config["text"])
     elif mode == "remote":
         text = asyncio.run(remote_tool(config, question))
     else:

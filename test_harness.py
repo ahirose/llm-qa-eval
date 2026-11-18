@@ -53,7 +53,7 @@ class HarnessTests(unittest.TestCase):
             log.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
             result = subprocess.run(command, cwd=ROOT, check=True, capture_output=True, encoding="utf-8")
             report = json.loads(result.stdout)
-            self.assertEqual(report["paired_graded"], 1)
+            self.assertEqual(report["paired_graded"], 9)
             self.assertEqual(report["baseline"]["judge_errors"], 1)
             self.assertIsNone(report["bootstrap"]["ci95_pp"])
 
@@ -84,10 +84,11 @@ class HarnessTests(unittest.TestCase):
             selection = json.loads(recommendation.read_text(encoding="utf-8"))["selection"]
             answers = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(selection["rag"], "external")
-        self.assertEqual(len(answers), 2)
-        self.assertTrue(all(row["model_profile"] == selection["model"]
-                            and row["answer"] == "Report to security@example.invalid."
-                            for row in answers))
+        cases = load_cases((ROOT / "cases.jsonl").read_bytes())
+        self.assertEqual(len(answers), 10)
+        self.assertEqual([(row["id"], row["question"], row["answer"]) for row in answers],
+                         [(case["id"], case["question"], case["reference"]) for case in cases])
+        self.assertTrue(all(row["model_profile"] == selection["model"] for row in answers))
 
     def evaluate(self, dataset, profiles):
         logs = dataset.parent / "runs"
@@ -107,7 +108,7 @@ class HarnessTests(unittest.TestCase):
             dataset.write_bytes((ROOT / dataset.name).read_bytes())
             result, summary, rows = self.evaluate(dataset, ["baseline", "direct", "search", "tool"])
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([profile["passed"] for profile in summary.values()], [0, 2, 2, 2])
+        self.assertEqual([profile["passed"] for profile in summary.values()], [0, 10, 10, 10])
         for row in rows[1:-1]:
             self.assertNotIn("answer", row)
             self.assertNotIn("reason", row)
@@ -129,7 +130,7 @@ class HarnessTests(unittest.TestCase):
         profiles = rows[-1]["profiles"]
         self.assertEqual(list(profiles), ["mock_a/none", "mock_a/external",
                                          "mock_b/none", "mock_b/external"])
-        self.assertEqual([item["passed"] for item in profiles.values()], [0, 2, 0, 2])
+        self.assertEqual([item["passed"] for item in profiles.values()], [0, 10, 0, 10])
         self.assertTrue(all(item["coverage"] == 1 for item in profiles.values()))
         self.assertEqual({row["model"] for row in rows if row["type"] == "case"},
                          {"fixture-a", "fixture-b"})
@@ -148,9 +149,9 @@ class HarnessTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 1)
         profiles = json.loads(result.stdout)["profiles"]
-        self.assertEqual(profiles["direct"]["errors"], 2)
+        self.assertEqual(profiles["direct"]["errors"], 10)
         self.assertIsNone(profiles["direct"]["pass_rate"])
-        self.assertEqual(profiles["baseline"]["failed"], 2)
+        self.assertEqual(profiles["baseline"]["failed"], 10)
 
     def test_external_search_contract_without_network(self):
         response = Mock()

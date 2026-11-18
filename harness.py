@@ -23,7 +23,7 @@ SYSTEM = """利用できる資料を根拠に、セキュリティポリシー�
 
 def answer(profile, question, root):
     files, retrieved = retrieve(profile["retrieval"], question, root)
-    tool_results = mcp_evidence(profile["mcp"], question)
+    tool_results = mcp_evidence(profile["mcp"], question, root)
     prompt = json.dumps({"question": question, "retrieval": retrieved,
                          "mcp": tool_results}, ensure_ascii=False)
     reply = generate(profile["model"], SYSTEM, prompt, files)

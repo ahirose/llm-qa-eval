@@ -8,11 +8,11 @@ ZIP を展開し、README があるフォルダで実行します。
 
 ```powershell
 python -m unittest -v
-python harness.py ask --profile direct "Where should I report a suspected security incident?"
+python harness.py ask --profile direct "セキュリティインシデントの疑いがある場合、どこに報告しますか？"
 python harness.py eval --dataset cases.jsonl --profiles baseline direct search tool
 ```
 
-モックの2問では baseline が 0/2、ほかの3方式が 2/2 になるよう設計しています。この結果は配線の確認用です。
+架空の社内セキュリティを題材にした日本語の質問が10件あります。`cases.jsonl` は評価用の模範回答付き、`questions.jsonl` は一括回答用です。モックでは baseline が 0/10、ほかの3方式が 10/10 になるよう設計しています。この結果は動作確認用です。
 
 ## モデル × RAG を一括比較する
 
@@ -68,6 +68,40 @@ python harness.py --config live.local.toml eval --dataset cases.jsonl --profiles
 質問は設定に応じて外部検索・MCP・モデルに送信されます。回答モデルには取得結果またはファイルが、採点モデルには質問・模範回答・候補回答が送信されます。接続前にデータの取り扱いを確認し、デモには同梱の架空データを使ってください。秘密値を設定・データセット・ツール引数に記入しないでください。
 
 ## 評価とログ
+
+### 評価の処理シーケンス
+
+`recommend.py` と `harness.py compare` は同じ評価処理を使います。
+
+```mermaid
+sequenceDiagram
+    actor User as 利用者
+    participant CLI as 評価 CLI
+    participant Source as 資料取得
+    participant Model as 回答モデル
+    participant Judge as 採点モデル
+    participant Log as 実行ログ
+
+    User->>CLI: 設定・質問セット・比較する条件を指定
+    CLI->>CLI: モデル × RAG の組み合わせを展開
+    loop 組み合わせごとに全質問を実行
+        CLI->>Source: 質問と取得設定を渡す
+        Note over CLI,Source: RAG の設定に従い、資料なし・直接入力・外部検索を切り替える。<br/>MCP が有効なら設定されたツールも呼び出す。
+        Source-->>CLI: ファイル・検索結果・MCP の結果
+        CLI->>Model: 質問と取得した資料
+        Model-->>CLI: 生成回答
+        CLI->>Judge: 質問・模範回答・生成回答
+        Judge-->>CLI: 合否と採点理由
+        CLI->>Log: 質問 ID・合否・時間・使用量を記録
+    end
+    CLI->>Log: 条件別の正答率・カバレッジ・エラー数を記録
+    opt recommend.py の場合
+        CLI->>CLI: 採点を完了した条件から推奨設定を選んで保存
+    end
+    CLI-->>User: 比較結果とログの場所を表示
+```
+
+回答生成や採点でエラーが起きた質問は、失敗した段階をログに記録して次の質問に進みます。採点理由と生成回答をログに含めるには `--log-content` を指定します。
 
 各データ行は `id`、`question`、`reference` の文字列を持ちます。`judge` は全プロファイル共通です。実モデルの採点では JSON の合否と理由を検証し、採点形式の異常は実行エラーとしてカウントします。正答率は合格数÷採点済み件数、カバレッジは採点済み件数÷全件です。カバレッジとエラー件数も併せて確認してください。
 
