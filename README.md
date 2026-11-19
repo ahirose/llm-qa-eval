@@ -2,6 +2,40 @@
 
 固定の質問・模範回答セットで、根拠の取得方式、MCP ツール、回答モデルの変更が正答率・応答時間・トークン使用量にどう影響するかを比較する Python CLI です。設定は TOML、質問と結果は CSV、詳細ログは JSONL、モックは Python 標準ライブラリで動作します。Python 3.11 以上が必要です。
 
+## GitHub から取得して実行する
+
+Git と Python 3.11 以上を用意し、PowerShell で次のコマンドを実行してください。
+
+```powershell
+git clone https://github.com/ahirose/llm-qa-eval.git
+cd llm-qa-eval
+python -m venv .venv
+```
+
+以降の例では `python` を使用します。作成した仮想環境を有効にしてください。
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+PowerShell の設定によって有効化できない場合は、以下の例の `python` を `.\.venv\Scripts\python.exe` に置き換えて実行できます。
+
+最初に、API キーなしで動作を確認します。
+
+```powershell
+python -m unittest discover -s tests -v
+python -m comparison.runner ask --profile direct "セキュリティインシデントの疑いがある場合、どこに報告しますか？"
+python -m comparison.runner eval --dataset comparison/data/cases.csv --profiles baseline direct search tool
+```
+
+実際の LLM API や検索サービスを利用するときは、同じ仮想環境に依存ライブラリをインストールし、「実サービスを接続する」の手順に進みます。
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+架空の社内セキュリティを題材にした日本語の質問が10件あります。`cases.csv` は評価用の模範回答付き、`questions.csv` は一括回答用です。モックでは baseline が 0/10、ほかの3方式が 10/10 になるよう設計しています。この結果は動作確認用です。
+
 ## ディレクトリ構成
 
 ```text
@@ -20,18 +54,6 @@ tests/                  自動テスト
 ```
 
 コマンドはリポジトリ直下から実行します。TOML 内の資料パスは TOML ファイルの場所を基準に解決します。
-
-## すぐに試す
-
-ZIP を展開し、README があるフォルダで実行します。
-
-```powershell
-python -m unittest discover -s tests -v
-python -m comparison.runner ask --profile direct "セキュリティインシデントの疑いがある場合、どこに報告しますか？"
-python -m comparison.runner eval --dataset comparison/data/cases.csv --profiles baseline direct search tool
-```
-
-架空の社内セキュリティを題材にした日本語の質問が10件あります。`cases.csv` は評価用の模範回答付き、`questions.csv` は一括回答用です。モックでは baseline が 0/10、ほかの3方式が 10/10 になるよう設計しています。この結果は動作確認用です。
 
 ## モデル × RAG を一括比較する
 
