@@ -2,7 +2,7 @@
 import asyncio
 from urllib.parse import urlsplit
 
-from models import credential
+from common.models import credential
 
 
 def endpoint(config):

@@ -4,3 +4,7 @@ runs/
 .env
 .env.*
 live.local.toml
+comparison/runs/
+answering/configs/*.json
+answering/outputs/
+configs/live.local.toml

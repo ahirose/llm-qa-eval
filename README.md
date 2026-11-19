@@ -2,14 +2,33 @@
 
 固定の質問・模範回答セットで、根拠の取得方式、MCP ツール、回答モデルの変更が正答率・応答時間・トークン使用量にどう影響するかを比較する Python CLI です。設定は TOML、データセットとログは JSONL、モックは Python 標準ライブラリで動作します。Python 3.11 以上が必要です。
 
+## ディレクトリ構成
+
+```text
+common/                 共通のモデル呼び出し・資料取得・回答生成
+  data/                 共通の参照資料と模擬検索データ
+comparison/             比較実行・採点・推奨設定・統計分析
+  data/cases.jsonl      比較・採点用の質問と模範回答
+  runs/                 比較ログと推奨設定の履歴（実行時に生成）
+answering/
+  batch.py              推奨設定を使った一括回答
+  data/questions.jsonl  回答生成用の質問
+  configs/              日時付き推奨設定（実行時に生成）
+  outputs/              回答リスト（実行時に生成）
+configs/                共通の TOML 設定
+tests/                  自動テスト
+```
+
+コマンドはリポジトリ直下から実行します。TOML 内の資料パスは TOML ファイルの場所を基準に解決します。
+
 ## すぐに試す
 
 ZIP を展開し、README があるフォルダで実行します。
 
 ```powershell
-python -m unittest -v
-python harness.py ask --profile direct "セキュリティインシデントの疑いがある場合、どこに報告しますか？"
-python harness.py eval --dataset cases.jsonl --profiles baseline direct search tool
+python -m unittest discover -s tests -v
+python -m comparison.runner ask --profile direct "セキュリティインシデントの疑いがある場合、どこに報告しますか？"
+python -m comparison.runner eval --dataset comparison/data/cases.jsonl --profiles baseline direct search tool
 ```
 
 架空の社内セキュリティを題材にした日本語の質問が10件あります。`cases.jsonl` は評価用の模範回答付き、`questions.jsonl` は一括回答用です。モックでは baseline が 0/10、ほかの3方式が 10/10 になるよう設計しています。この結果は動作確認用です。
@@ -23,24 +42,28 @@ python harness.py eval --dataset cases.jsonl --profiles baseline direct search t
 `answer_batch.py` は推奨設定と試験時と同じ TOML を読み込み、採点なしで質問に回答します。入力は `id` と `question` を持つ JSONL で、出力には質問と回答が入力順に並びます。失敗した質問にはエラー種別を記録します。既存の回答ファイルとの上書きを避けるため、再実行時は新しい出力ファイル名を指定します。
 
 ```powershell
-python recommend.py --dataset cases.jsonl --models mock_a mock_b --rag none external --output runs/recommendation.json
-python answer_batch.py --recommendation runs/recommendation.json --questions questions.jsonl --output runs/answers.jsonl
+python -m comparison.recommend --dataset comparison/data/cases.jsonl --models mock_a mock_b --rag none external
+python -m answering.batch --recommendation answering/configs/recommended-YYYYMMDD-HHMMSS-mmmZ-ID.json --questions answering/data/questions.jsonl --output answering/outputs/answers.jsonl
 ```
 
-実 API で使う場合は両方のコマンドに `--config live.local.toml` を追加します。試験側のモデル名は `--models openai claude` に変更します。
+実 API で使う場合は両方のコマンドに `--config configs/live.local.toml` を追加します。試験側のモデル名は `--models openai claude` に変更します。
+
+推奨設定は既定で `answering/configs/recommended-YYYYMMDD-HHMMSS-mmmZ-ID.json` に生成します。日時は UTC（末尾の Z）、ミリ秒とランダム ID で同時刻の出力を区別します。同じ内容を比較ログのフォルダにも保存します。ファイル内にはタイムゾーン付き生成日時、元の比較ログ、設定ファイルの参照・ハッシュ、採用したモデル・RAG・MCP 設定を記録します。秘密値は環境変数名で参照してください。
+
+回答コマンドの `--recommendation` には、比較終了時に表示された実際のファイル名を指定します。実行時は比較に使用した同じ TOML を指定してください。既定の TOML は `configs/mock.toml` です。推奨設定は履歴として保存され、既存ファイルへの上書きはエラーになります。
 
 ### 比較結果だけを出す
 
 `compare` は、モデルと RAG 条件の全組み合わせを同じ質問セット・採点モデルで実行します。次のコマンドは2モデル × 2条件の4組を試します。
 
 ```powershell
-python harness.py compare --dataset cases.jsonl --models mock_a mock_b --rag none external
+python -m comparison.runner compare --dataset comparison/data/cases.jsonl --models mock_a mock_b --rag none external
 ```
 
 実サービスでは、`live.local.toml` の `[matrix.models]` に比較するモデルの別名と ID、`[matrix.retrievals]` に検索や直接入力の設定を記入します。必要な環境変数と `[judge]` を設定して実行します。
 
 ```powershell
-python harness.py --config live.local.toml compare --dataset cases.jsonl --models openai claude --rag none external
+python -m comparison.runner --config configs/live.local.toml compare --dataset comparison/data/cases.jsonl --models openai claude --rag none external
 ```
 
 `--rag` の既定値は `none external` です。直接ファイル入力も並べるには `--rag none external direct` を指定します。MCP は既定で無効です。`[matrix.mcp]` を設定すると全組み合わせで同じツールを使います。
@@ -50,12 +73,12 @@ python harness.py --config live.local.toml compare --dataset cases.jsonl --model
 ## 実サービスを接続する
 
 1. 仮想環境で `python -m pip install -r requirements.txt` を実行します。
-2. `live.example.toml` を同じフォルダの `live.local.toml` にコピーします。利用可能なモデル ID と、使用する場合は MCP のツール名・引数名を入力します。
+2. `configs/live.example.toml` を同じフォルダの `live.local.toml` にコピーします。利用可能なモデル ID と、使用する場合は MCP のツール名・引数名を入力します。
 3. 利用するサービスの認証情報と接続先 URL を、OS またはシークレットマネージャー経由で実行プロセスの環境変数に設定します。モデルは `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`、検索・MCP はサンプル設定にある環境変数を参照します。Bearer 認証が不要なら、そのプロファイルから `token_env` を外します。
 4. 同じ質問セット、同じ採点モデルで比較します。まず `baseline direct`、検索の準備ができたら `direct search`、MCP は `baseline tool`、モデル変更は `direct claude_direct` を比較します。
 
 ```powershell
-python harness.py --config live.local.toml eval --dataset cases.jsonl --profiles baseline direct
+python -m comparison.runner --config configs/live.local.toml eval --dataset comparison/data/cases.jsonl --profiles baseline direct
 ```
 
 ### 切り替え
@@ -71,7 +94,7 @@ python harness.py --config live.local.toml eval --dataset cases.jsonl --profiles
 
 ### 評価の処理シーケンス
 
-`recommend.py` と `harness.py compare` は同じ評価処理を使います。
+`comparison.recommend` と `comparison.runner compare` は同じ評価処理を使います。
 
 ```mermaid
 sequenceDiagram
@@ -105,7 +128,7 @@ sequenceDiagram
 
 各データ行は `id`、`question`、`reference` の文字列を持ちます。`judge` は全プロファイル共通です。実モデルの採点では JSON の合否と理由を検証し、採点形式の異常は実行エラーとしてカウントします。正答率は合格数÷採点済み件数、カバレッジは採点済み件数÷全件です。カバレッジとエラー件数も併せて確認してください。
 
-`runs/` の JSONL は設定・データセットの SHA-256、ケース ID、方式、モデル ID、使用量、回答生成（取得・MCP を含む）と採点の所要時間、合否、エラー段階を記録します。質問・模範回答・原文の検索結果は保存しません。`--log-content` を付けると生成回答と採点理由もローカルに保存します。保存内容に元の資料が引用される可能性があります。
+`comparison/runs/` の JSONL は設定・データセットの SHA-256、ケース ID、方式、モデル ID、使用量、回答生成（取得・MCP を含む）と採点の所要時間、合否、エラー段階を記録します。質問・模範回答・原文の検索結果は保存しません。`--log-content` を付けると生成回答と採点理由もローカルに保存します。保存内容に元の資料が引用される可能性があります。
 
 応募デモでは、同じ資料を検索側とファイル側に用意し、モデルと採点条件を固定して、検索なし・外部検索・直接入力を比較できます。過去の Security Q&A Assistant の 70%→90% は当時の結果として扱い、このサンプルの結果とは区別します。実験を報告する際は、データセット、モデル ID、検索インデックスの版と、正答率・件数・カバレッジを添えられます。
 
@@ -114,8 +137,8 @@ sequenceDiagram
 `compare_stats.py` は、同じ評価ランに含まれる2条件を質問 ID で対応させます。模範回答付きの質問セットを両条件に使い、採点モデル、回答指示、元資料を揃えてください。外部検索の効果だけを見たいときは、回答モデルも揃えます。
 
 ```powershell
-python harness.py --config live.local.toml compare --dataset holdout.jsonl --models openai --rag external direct --logs runs/holdout
-python compare_stats.py --log "runs/holdout/<実行ログ名>.jsonl" --baseline openai/external --candidate openai/direct
+python -m comparison.runner --config configs/live.local.toml compare --dataset comparison/data/holdout.jsonl --models openai --rag external direct --logs comparison/runs/holdout
+python -m comparison.statistics --log "comparison/runs/holdout/<実行ログ名>.jsonl" --baseline openai/external --candidate openai/direct
 ```
 
 2行目の `--log` には、1行目の末尾に表示された JSONL のパスを指定します。標準出力は JSON です。`difference_pp` は候補の正答率から基準の正答率を引いた差（パーセントポイント）で、`pair_counts` には両方合格・改善・悪化・両方不合格の件数が出ます。100問中25問が改善し5問が悪化した場合は +20 ポイントです。

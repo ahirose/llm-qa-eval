@@ -1,7 +1,7 @@
 """Judge a candidate against a fixed reference without passing profile metadata."""
 import json
 
-from models import generate
+from common.models import generate
 
 
 RUBRIC = """質問に対する候補回答を、模範回答と比較してください。

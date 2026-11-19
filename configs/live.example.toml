@@ -10,7 +10,7 @@ mcp = { mode = "none" }
 
 [profiles.direct]
 model = { provider = "openai", id = "REPLACE_WITH_OPENAI_MODEL_ID" }
-retrieval = { mode = "direct-file", files = ["policy.txt"] }
+retrieval = { mode = "direct-file", files = ["../common/data/policy.txt"] }
 mcp = { mode = "none" }
 
 [profiles.search]
@@ -25,7 +25,7 @@ mcp = { mode = "remote", url_env = "HARNESS_MCP_URL", token_env = "HARNESS_MCP_T
 
 [profiles.claude_direct]
 model = { provider = "anthropic", id = "REPLACE_WITH_CLAUDE_MODEL_ID" }
-retrieval = { mode = "direct-file", files = ["policy.txt"] }
+retrieval = { mode = "direct-file", files = ["../common/data/policy.txt"] }
 mcp = { mode = "none" }
 
 
@@ -35,4 +35,4 @@ claude = { provider = "anthropic", id = "REPLACE_WITH_CLAUDE_MODEL_ID" }
 
 [matrix.retrievals]
 external = { mode = "external-search", top_k = 3, url_env = "HARNESS_SEARCH_URL", token_env = "HARNESS_SEARCH_TOKEN" }
-direct = { mode = "direct-file", files = ["policy.txt"] }
+direct = { mode = "direct-file", files = ["../common/data/policy.txt"] }
