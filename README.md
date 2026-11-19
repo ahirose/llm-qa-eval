@@ -20,6 +20,15 @@ python -m venv .venv
 
 PowerShell の設定によって有効化できない場合は、以下の例の `python` を `.\.venv\Scripts\python.exe` に置き換えて実行できます。
 
+Linux の Bash では、取得から仮想環境の有効化まで次のコマンドを使います。
+
+```bash
+git clone https://github.com/ahirose/llm-qa-eval.git
+cd llm-qa-eval
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
 最初に、API キーなしで動作を確認します。
 
 ```powershell
@@ -94,23 +103,269 @@ python -m comparison.runner --config configs/live.local.toml compare --dataset c
 
 ## 実サービスを接続する
 
-1. 仮想環境で `python -m pip install -r requirements.txt` を実行します。
-2. `configs/live.example.toml` を同じフォルダの `live.local.toml` にコピーします。利用可能なモデル ID と、使用する場合は MCP のツール名・引数名を入力します。
-3. 利用するサービスの認証情報と接続先 URL を、OS またはシークレットマネージャー経由で実行プロセスの環境変数に設定します。モデルは `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`、検索・MCP はサンプル設定にある環境変数を参照します。Bearer 認証が不要なら、そのプロファイルから `token_env` を外します。
-4. 同じ質問セット、同じ採点モデルで比較します。まず `baseline direct`、検索の準備ができたら `direct search`、MCP は `baseline tool`、モデル変更は `direct claude_direct` を比較します。
+以下はリポジトリ直下で実行します。最初は OpenAI の2モデルと `none direct` で接続を確認し、検索サービスの準備後に `external` を加える流れです。API 呼び出しには、各サービスで有効な API キー、利用可能なモデル、利用料金の支払い設定が必要です。
+
+### 1. 仮想環境と設定ファイルを準備する
+
+PowerShell では次を実行します。既に作成した仮想環境がある場合は、有効化から始めます。
 
 ```powershell
-python -m comparison.runner --config configs/live.local.toml eval --dataset comparison/data/cases.csv --profiles baseline direct
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item configs/live.example.toml configs/live.local.toml
 ```
 
-### 切り替え
+Linux の Bash では次を実行します。
 
-- `model` は `provider`、`id`、任意の `max_tokens`。OpenAI Responses API と Anthropic Messages API を使用します。利用モデルはアカウントと入力形式に合わせて指定します。
-- `retrieval.mode` は `none` / `direct-file` / `external-search`。直接入力は設定ファイルを基準とした `files` で UTF-8 の TXT・Markdown または PDF を指定します。OpenAI は `input_file`、Anthropic は PDF を `document`、テキストファイルをメッセージ内のテキストブロックで送ります。合計5 MiB が上限です。
-- 外部検索は HTTPS の JSON API に `POST {"query":"...","top_k":3}` を送り、`{"results":[{"id":"doc-1","text":"passage"}]}` を受け取ります。既存の Pinecone 検索を使う場合は、質問の埋め込みとインデックス照会を担当する検索サービスから、この形式で結果を返します。
-- `mcp.mode` は `none` / `remote`。MCP Python SDK v1 の Streamable HTTP で、設定された信頼済みサーバー上の参照系ツールを各質問で一度呼びます。`arguments` の固定引数に、`question_arg`（既定値 `query`）で質問を追加します。比較条件を固定するため、モデルにはツールの戻り値を渡します。ツールはテキストの content ブロックを返す必要があります。
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp configs/live.example.toml configs/live.local.toml
+```
 
-質問は設定に応じて外部検索・MCP・モデルに送信されます。回答モデルには取得結果またはファイルが、採点モデルには質問・模範回答・候補回答が送信されます。接続前にデータの取り扱いを確認してください。初回の動作確認には同梱の架空データを使用できます。秘密値を設定・データセット・ツール引数に記入しないでください。
+コピー先が既にある場合は、既存の設定を編集してください。PowerShell で有効化できない場合は、以降の `python` を `.\.venv\Scripts\python.exe` に置き換えられます。Linux では `.venv/bin/python` を使えます。仮想環境の有効化後は、以下の Python コマンドは両 OS で共通です。
+
+### 2. OpenAI の回答モデルと採点モデルを設定する
+
+`configs/live.local.toml` を次の最小構成に置き換えます。`REPLACE_WITH_...` は、そのアカウントで利用可能な実際のモデル ID に変更してください。`model_a` と `model_b` は任意の別名です。同じモデルを両方に設定すると、同一モデルの比較になります。
+
+```toml
+[judge]
+provider = "openai"
+id = "REPLACE_WITH_JUDGE_MODEL_ID"
+max_tokens = 4096
+
+[matrix.models]
+model_a = { provider = "openai", id = "REPLACE_WITH_OPENAI_MODEL_A_ID", max_tokens = 4096 }
+model_b = { provider = "openai", id = "REPLACE_WITH_OPENAI_MODEL_B_ID", max_tokens = 4096 }
+
+[matrix.retrievals]
+direct = { mode = "direct-file", files = ["../common/data/policy.txt"] }
+```
+
+`[judge]` は全条件の回答を採点するモデルです。`[matrix.models]` は比較対象の回答モデルで、採点モデルと別に指定できます。`max_tokens` は生成上限です。推論モデルでは推論にもトークンを消費するため、回答が完了しない場合は上限を調整してください。API に送るモデル ID は、ChatGPT の画面に表示される選択肢とは別に確認します。
+
+OpenAI の API キーを、実行するターミナルの環境変数に設定します。次の入力は画面に表示されません。
+
+PowerShell では次を実行します。
+
+```powershell
+$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'OpenAI API key' -AsSecureString)).Password
+```
+
+Linux の Bash では次を実行します。
+
+```bash
+read -rsp 'OpenAI API key: ' OPENAI_API_KEY
+echo
+export OPENAI_API_KEY
+```
+
+設定できたか、キー本体を表示せずに確認できます。利用可能なモデル ID の一覧を取得するには、その次のコマンドを使います。
+
+```text
+python -c "import os; print('OPENAI_API_KEY set:', bool(os.environ.get('OPENAI_API_KEY')))"
+python -c "from openai import OpenAI; print('\n'.join(sorted(m.id for m in OpenAI().models.list())))"
+```
+
+一覧には用途の異なるモデルも含まれます。回答生成には Responses API に対応し、直接入力では対象ファイル形式を受け付けるモデルを選んでください。OpenAI の呼び出しは `common/models.py` の `client.responses.create()` で行います。API キーの読み込みは環境変数経由で、`.env` の自動読み込みはありません。モデルと入力形式の対応は公式ドキュメントで確認できます。 [OpenAI モデル一覧](https://developers.openai.com/api/docs/models) · [ファイル入力](https://developers.openai.com/api/docs/guides/file-inputs)
+
+### 3. まず1問で接続し、その後10問を比較する
+
+CSV を表計算ソフトで編集し、ヘッダーを保ったまま1問だけの `comparison/data/smoke.csv` を用意できます。列は `id,question,reference,group` で、`group` は空欄にできます。
+
+```text
+python -m comparison.runner --config configs/live.local.toml compare --dataset comparison/data/smoke.csv --models model_a --rag none direct
+```
+
+エラー件数と採点済み件数を確認したら、日本語10問を2モデル × 2条件で試します。
+
+```text
+python -m comparison.recommend --config configs/live.local.toml --dataset comparison/data/cases.csv --models model_a model_b --rag none direct
+```
+
+`none` は資料を渡さない条件です。`direct` は資料全体をモデルに渡す条件です。全件成功時は40件の回答生成と40件の採点が発生します。回答と採点の両方に料金が発生し、各質問で資料も送信されます。
+
+比較終了時に表示される `Results CSV` で回答・合否・理由を、`Summary CSV` で集計を確認します。エラーは正答率の分母から除かれるので、カバレッジとエラー件数も確認してください。
+
+### 4. 資料の直接入力を設定する
+
+上の `direct` の `files` を、評価したい社内規程などのファイルに変更します。複数ファイルも指定できます。
+
+```toml
+[matrix.retrievals]
+direct = { mode = "direct-file", files = ["../common/data/policy.txt", "../common/data/handbook.pdf"] }
+```
+
+この例は該当ファイルを用意してから使います。既存の `[matrix.retrievals]` 内の行を編集してください。同じテーブルを重複定義すると TOML の読み込みエラーになります。
+
+パスは TOML の配置場所を基準に解決します。`configs/live.local.toml` から見た `../common/data/policy.txt` は、リポジトリ内の `common/data/policy.txt` です。Windows・Linux とも、TOML にはスラッシュ区切りを使えます。
+
+本ツールでは UTF-8 の TXT・Markdown と PDF に対応し、合計サイズは5 MiBまでです。OpenAI には `input_file` として送信します。Anthropic では TXT・Markdown は本文テキスト、PDF は document ブロックとして送信します。外部検索の登録作業は、直接入力には不要です。 [Anthropic PDF 入力](https://platform.claude.com/docs/en/build-with-claude/pdf-support)
+
+### 5. 外部検索による RAG を設定する
+
+外部検索では、質問に関連する資料の抜粋を検索サービスから取得し、回答モデルに渡します。検索サービスはあらかじめ準備します。
+
+1. 対象資料を分割し、検索インデックスに登録します。
+2. 質問を受けて検索し、本文の抜粋を返す HTTPS API を用意します。
+3. API の URL と認証トークンを設定し、`external` を比較条件に追加します。
+
+Pinecone を使う場合は、検索サービス側で質問の埋め込み作成、インデックス照会、取得したレコードからの本文の抽出を行います。本ツールはそのサービスへ質問を送り、抜粋を受け取ります。インデックスの作成・資料の登録・Pinecone 固有の問い合わせは、検索サービス側で実装します。
+
+検索 API の入出力は次の形式です。以下の `search.example.com` は置き換え用の例です。
+
+```http
+POST https://search.example.com/search
+Content-Type: application/json
+Authorization: Bearer <認証トークン>
+```
+
+```json
+{"query":"インシデントの疑いがある場合の報告先は？","top_k":3}
+```
+
+```json
+{
+  "results": [
+    {
+      "id": "policy-incident",
+      "text": "インシデントの疑いがある場合は security@example.invalid に報告する。"
+    }
+  ]
+}
+```
+
+`results` は配列で、各項目に `id` と文字列の `text` が必要です。ヒットがなければ `{"results":[]}` を返します。`top_k` は1〜20で指定でき、最大でその件数、各本文は先頭8,000文字までモデルに渡します。検索の HTTP タイムアウトは30秒です。
+
+既存の `[matrix.retrievals]` に `external` を追加します。
+
+```toml
+[matrix.retrievals]
+direct = { mode = "direct-file", files = ["../common/data/policy.txt"] }
+external = { mode = "external-search", top_k = 3, url_env = "HARNESS_SEARCH_URL", token_env = "HARNESS_SEARCH_TOKEN" }
+```
+
+PowerShell で接続先とトークンを設定します。
+
+```powershell
+$env:HARNESS_SEARCH_URL = 'https://search.example.com/search'
+$env:HARNESS_SEARCH_TOKEN = [System.Net.NetworkCredential]::new('', (Read-Host 'Search API token' -AsSecureString)).Password
+```
+
+Linux の Bash では次を使います。
+
+```bash
+export HARNESS_SEARCH_URL='https://search.example.com/search'
+read -rsp 'Search API token: ' HARNESS_SEARCH_TOKEN
+echo
+export HARNESS_SEARCH_TOKEN
+```
+
+認証が不要なサービスの場合は、TOML の `external` から `token_env` を削除します。現実装は HTTPS と任意の Bearer トークンに対応します。URL に認証情報を埋め込む形式は受け付けません。
+
+検索 API 単体の入出力は、両 OS 共通の次のコマンドで確認できます。
+
+```text
+python -c "import os,httpx; r=httpx.post(os.environ['HARNESS_SEARCH_URL'],headers={'Authorization':'Bearer '+os.environ['HARNESS_SEARCH_TOKEN']},json={'query':'報告先は？','top_k':3},timeout=30); r.raise_for_status(); print(r.json())"
+```
+
+この確認例は Bearer 認証を使う設定です。認証不要なら `headers=...` の引数を外してください。
+
+準備ができたら資料なし・外部検索・直接入力を比較します。
+
+```text
+python -m comparison.recommend --config configs/live.local.toml --dataset comparison/data/cases.csv --models model_a model_b --rag none external direct
+```
+
+同梱の `fixture-search` は質問文の完全一致で返す模擬検索です。実検索への接続には `mode = "external-search"` を指定します。
+
+### 6. Anthropic のモデルも比較する
+
+`[matrix.models]` 内に次の行を追加し、モデル ID を実際に利用可能なものに変更します。
+
+```toml
+claude = { provider = "anthropic", id = "REPLACE_WITH_CLAUDE_MODEL_ID", max_tokens = 4096 }
+```
+
+PowerShell では次を使います。
+
+```powershell
+$env:ANTHROPIC_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'Anthropic API key' -AsSecureString)).Password
+```
+
+Linux の Bash では次を使います。
+
+```bash
+read -rsp 'Anthropic API key: ' ANTHROPIC_API_KEY
+echo
+export ANTHROPIC_API_KEY
+```
+
+```text
+python -m comparison.recommend --config configs/live.local.toml --dataset comparison/data/cases.csv --models model_a claude --rag none direct
+```
+
+採点モデルは引き続き `[judge]` の設定を使います。OpenAI を Judge に使う場合は、両方の API キーが必要です。Anthropic は `common/models.py` の `client.messages.create()` で呼び出します。 [Anthropic Messages API](https://platform.claude.com/docs/en/api/messages/create)
+
+### 7. MCP サーバーから資料を取得する
+
+MCP を利用する場合は、Streamable HTTP に対応する HTTPS サーバー、参照系ツール名、そのツールの引数を確認し、TOML に次のテーブルを追加します。
+
+```toml
+[matrix.mcp]
+mode = "remote"
+url_env = "HARNESS_MCP_URL"
+token_env = "HARNESS_MCP_TOKEN"
+tool = "search_policy"
+question_arg = "query"
+arguments = { top_k = 3 }
+```
+
+この例では `search_policy` を `{"query":"質問文","top_k":3}` で呼びます。サーバーが受け付ける実際の名前・引数に合わせてください。`question_arg` で指定した引数には質問文が入り、`arguments` の同名の固定値は上書きされます。
+
+PowerShell では次を使います。
+
+```powershell
+$env:HARNESS_MCP_URL = 'https://mcp.example.com/mcp'
+$env:HARNESS_MCP_TOKEN = [System.Net.NetworkCredential]::new('', (Read-Host 'MCP token' -AsSecureString)).Password
+```
+
+Linux の Bash では次を使います。
+
+```bash
+export HARNESS_MCP_URL='https://mcp.example.com/mcp'
+read -rsp 'MCP token: ' HARNESS_MCP_TOKEN
+echo
+export HARNESS_MCP_TOKEN
+```
+
+認証不要の場合は `token_env` を削除します。ツールはテキストの content ブロックを返す必要があり、先頭16,000文字までを回答モデルに渡します。各質問で設定ツールを1回呼び、MCP 処理全体は45秒でタイムアウトします。OAuth や stdio 接続は設定項目として提供していません。
+
+`[matrix.mcp]` はその実行の全組み合わせに適用されます。MCP のみの効果を確認するなら、まず `--rag none` で試し、MCP を有効にする前後のランを比較します。通常の資料取得と MCP を併用すると、両方の取得内容をモデルに渡します。
+
+### 8. 推奨設定で質問リストに回答する
+
+推奨設定の生成後、出力された実際のファイル名を指定します。比較時と同じ TOML と必要な環境変数を使います。
+
+```text
+python -m answering.batch --config configs/live.local.toml --recommendation answering/configs/recommended-YYYYMMDD-HHMMSS-mmmZ-ID.json --questions answering/data/questions.csv --output answering/outputs/answers.csv
+```
+
+`recommended-...` は実ファイル名に置き換えてください。設定ファイルの内容が比較時から変わった場合は、比較を再実行して新しい推奨設定を生成します。既存の回答ファイルがある場合は、新しい出力名を指定します。
+
+### 接続でエラーになった場合
+
+- `AuthenticationError` や HTTP 401 は、同じターミナルに正しいキー・トークンが設定されているか確認します。ターミナルを開き直すと、上の方法で設定した環境変数は再設定が必要です。
+- モデルに関する HTTP 404 はモデル ID と利用権限を、HTTP 429 は利用枠・残高・レート制限を確認します。
+- `FileNotFoundError` は、TOML の配置場所を基準とした資料パスを確認します。
+- `HTTPStatusError` や `KeyError` が検索で発生した場合は、検索 API 単体の確認コマンドでステータスと `results/id/text` の形式を確認します。
+- `ValueError` は入力の不正、未完了の回答、採点 JSON の形式異常などで発生します。採点エラーなら `judge`、資料取得や回答生成のエラーなら `answer` が結果 CSV の `error_stage` に記録されます。
+- LLM API のタイムアウトは60秒、自動リトライは無効です。失敗したケースがあるランでは、エラーとカバレッジを確認してから接続設定や生成上限を調整します。
+
+質問は設定に応じて外部検索・MCP・モデルに送信されます。回答モデルには取得結果またはファイルが、採点モデルには質問・模範回答・候補回答が送信されます。接続先と送信データを確認して利用してください。秘密値は環境変数やシークレットマネージャーで管理し、TOML・CSV・ツール引数に書き込まないでください。`configs/live.local.toml` は Git の追跡対象外です。
 
 ## 評価とログ
 
