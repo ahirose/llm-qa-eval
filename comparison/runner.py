@@ -1,4 +1,4 @@
-"""Run a single question or compare profiles against a fixed JSONL dataset."""
+"""Run a single question or compare profiles against a fixed CSV dataset."""
 import argparse
 import hashlib
 import json
@@ -12,11 +12,12 @@ from pathlib import Path
 
 from comparison.judge import judge
 from common.pipeline import answer
+from common.tabular import read_records, write_csv
 
 
 
 def load_cases(raw):
-    cases = [json.loads(line) for line in raw.decode("utf-8-sig").splitlines() if line.strip()]
+    cases = read_records(raw)
     if not cases or any(not isinstance(case, dict) or
                         any(not isinstance(case.get(key), str) or not case[key].strip()
                             for key in ("id", "question", "reference")) for case in cases):
@@ -36,6 +37,7 @@ def run_eval(args, profiles, config, root, config_digest):
     log_path = args.logs / f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex}.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     summaries = {}
+    result_rows = []
     with log_path.open("x", encoding="utf-8") as log:
         def record(row):
             print(json.dumps(row, ensure_ascii=False), file=log, flush=True)
@@ -50,6 +52,8 @@ def run_eval(args, profiles, config, root, config_digest):
             answer_times = []
             for case in cases:
                 stage = "answer"
+                answer_text = ""
+                reason = ""
                 started = time.perf_counter()
                 row = {"type": "case", "profile": name, "id": case["id"],
                        "retrieval": profile["retrieval"]["mode"], "mcp": profile["mcp"]["mode"],
@@ -59,6 +63,7 @@ def run_eval(args, profiles, config, root, config_digest):
                     row["group"] = case["group"]
                 try:
                     reply, evidence = answer(profile, case["question"], root)
+                    answer_text = reply.text
                     row.update(model=reply.model, usage=reply.usage, evidence=evidence,
                                answer_ms=round((time.perf_counter() - started) * 1000))
                     answer_times.append(row["answer_ms"])
@@ -67,6 +72,7 @@ def run_eval(args, profiles, config, root, config_digest):
                     stage = "judge"
                     judge_started = time.perf_counter()
                     verdict, judge_model, judge_usage = judge(judge_config, case, reply.text)
+                    reason = verdict["reason"]
                     row.update(passed=verdict["pass"], judge_model=judge_model,
                                judge_usage=judge_usage,
                                judge_ms=round((time.perf_counter() - judge_started) * 1000))
@@ -79,19 +85,37 @@ def run_eval(args, profiles, config, root, config_digest):
                     errors += 1
                 row["total_ms"] = round((time.perf_counter() - started) * 1000)
                 record(row)
+                result_rows.append({
+                    **row, "question": case["question"], "reference": case["reference"],
+                    "answer": answer_text, "reason": reason,
+                    "case_count": len(cases), "dataset_sha256": hashlib.sha256(dataset).hexdigest(),
+                })
             graded = passed + failed
             summaries[name] = {"passed": passed, "failed": failed, "errors": errors,
                                "total": len(cases), "pass_rate": passed / graded if graded else None,
                                "coverage": graded / len(cases)}
-            if args.command == "compare":
-                summaries[name]["mean_answer_ms"] = (
-                    round(sum(answer_times) / len(answer_times)) if answer_times else None
-                )
+            summaries[name]["mean_answer_ms"] = (
+                round(sum(answer_times) / len(answer_times)) if answer_times else None
+            )
         record({"type": "summary", "profiles": summaries})
+    results_path = log_path.with_name(log_path.stem + "-results.csv")
+    summary_path = log_path.with_name(log_path.stem + "-summary.csv")
+    write_csv(results_path, result_rows, [
+        "profile", "id", "question", "reference", "group", "answer", "passed", "reason",
+        "provider", "requested_model", "model", "retrieval", "mcp",
+        "answer_ms", "judge_ms", "total_ms", "usage", "judge_model", "judge_usage",
+        "error_stage", "error_type", "case_count", "dataset_sha256",
+    ])
+    write_csv(summary_path, [{"profile": name, **item} for name, item in summaries.items()],
+              ["profile", "passed", "failed", "errors", "total", "pass_rate", "coverage",
+               "mean_answer_ms"])
     if args.command == "compare":
         print_comparison(summaries, log_path)
+        print(f"Results CSV: {results_path}\nSummary CSV: {summary_path}")
     else:
-        print(json.dumps({"log": str(log_path), "profiles": summaries}, ensure_ascii=False, indent=2))
+        print(json.dumps({"log": str(log_path), "results_csv": str(results_path),
+                          "summary_csv": str(summary_path), "profiles": summaries},
+                         ensure_ascii=False, indent=2))
     return summaries, log_path
 
 

@@ -5,9 +5,42 @@ import json
 import math
 from pathlib import Path
 import random
+from common.tabular import read_records, write_csv
+
+
+def read_csv_pairs(path, baseline, candidate):
+    rows = read_records(path.read_bytes())
+    profiles = {baseline: {}, candidate: {}}
+    metadata = set()
+    for row in rows:
+        if row.get("profile") not in profiles:
+            continue
+        metadata.add((row["dataset_sha256"], int(row["case_count"])))
+        passed = row["passed"].lower()
+        if passed not in {"true", "false", ""}:
+            raise ValueError("CSV passed values must be True, False or empty")
+        if passed:
+            row["passed"] = passed == "true"
+        else:
+            row.pop("passed")
+        profile = profiles[row["profile"]]
+        if row["id"] in profile:
+            raise ValueError("Duplicate case ID in CSV profile")
+        profile[row["id"]] = row
+    if len(metadata) != 1:
+        raise ValueError("CSV must contain one evaluation dataset")
+    digest, count = metadata.pop()
+    before, after = profiles[baseline], profiles[candidate]
+    if not before or before.keys() != after.keys() or len(before) != count:
+        raise ValueError("Both profiles must have the same complete set of case records")
+    if any(row.get("group") != after[key].get("group") for key, row in before.items()):
+        raise ValueError("Group mismatch between CSV profiles")
+    return {"dataset_sha256": digest}, before, after
 
 
 def read_pairs(path, baseline, candidate):
+    if path.suffix.lower() == ".csv":
+        return read_csv_pairs(path, baseline, candidate)
     profiles = {baseline: {}, candidate: {}}
     with path.open(encoding="utf-8-sig") as source:
         rows = (json.loads(line) for line in source if line.strip())
@@ -125,6 +158,7 @@ def main():
     parser.add_argument("--resamples", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--margin-pp", type=float)
+    parser.add_argument("--output", type=Path, help="Save the statistical report as CSV")
     args = parser.parse_args()
     if args.baseline == args.candidate:
         parser.error("Choose two different profiles")
@@ -137,8 +171,23 @@ def main():
     except (OSError, ValueError, KeyError) as exc:
         parser.error(str(exc))
     result = compare(before, after, args.resamples, args.seed, args.margin_pp)
-    print(json.dumps({"baseline_profile": args.baseline, "candidate_profile": args.candidate,
-                      "dataset_sha256": run.get("dataset_sha256"), **result}, indent=2))
+    report = {"baseline_profile": args.baseline, "candidate_profile": args.candidate,
+              "dataset_sha256": run.get("dataset_sha256"), **result}
+    if args.output:
+        flattened = {}
+
+        def flatten(values, prefix=""):
+            for key, value in values.items():
+                name = prefix + key
+                if isinstance(value, dict):
+                    flatten(value, name + "_")
+                else:
+                    flattened[name] = value
+
+        flatten(report)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        write_csv(args.output, [flattened], list(flattened))
+    print(json.dumps(report, indent=2))
     return 0
 
 

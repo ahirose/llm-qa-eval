@@ -1,6 +1,6 @@
 # Q&A Harness
 
-固定の質問・模範回答セットで、根拠の取得方式、MCP ツール、回答モデルの変更が正答率・応答時間・トークン使用量にどう影響するかを比較する Python CLI です。設定は TOML、データセットとログは JSONL、モックは Python 標準ライブラリで動作します。Python 3.11 以上が必要です。
+固定の質問・模範回答セットで、根拠の取得方式、MCP ツール、回答モデルの変更が正答率・応答時間・トークン使用量にどう影響するかを比較する Python CLI です。設定は TOML、質問と結果は CSV、詳細ログは JSONL、モックは Python 標準ライブラリで動作します。Python 3.11 以上が必要です。
 
 ## ディレクトリ構成
 
@@ -8,11 +8,11 @@
 common/                 共通のモデル呼び出し・資料取得・回答生成
   data/                 共通の参照資料と模擬検索データ
 comparison/             比較実行・採点・推奨設定・統計分析
-  data/cases.jsonl      比較・採点用の質問と模範回答
+  data/cases.csv      比較・採点用の質問と模範回答
   runs/                 比較ログと推奨設定の履歴（実行時に生成）
 answering/
   batch.py              推奨設定を使った一括回答
-  data/questions.jsonl  回答生成用の質問
+  data/questions.csv  回答生成用の質問
   configs/              日時付き推奨設定（実行時に生成）
   outputs/              回答リスト（実行時に生成）
 configs/                共通の TOML 設定
@@ -28,10 +28,10 @@ ZIP を展開し、README があるフォルダで実行します。
 ```powershell
 python -m unittest discover -s tests -v
 python -m comparison.runner ask --profile direct "セキュリティインシデントの疑いがある場合、どこに報告しますか？"
-python -m comparison.runner eval --dataset comparison/data/cases.jsonl --profiles baseline direct search tool
+python -m comparison.runner eval --dataset comparison/data/cases.csv --profiles baseline direct search tool
 ```
 
-架空の社内セキュリティを題材にした日本語の質問が10件あります。`cases.jsonl` は評価用の模範回答付き、`questions.jsonl` は一括回答用です。モックでは baseline が 0/10、ほかの3方式が 10/10 になるよう設計しています。この結果は動作確認用です。
+架空の社内セキュリティを題材にした日本語の質問が10件あります。`cases.csv` は評価用の模範回答付き、`questions.csv` は一括回答用です。モックでは baseline が 0/10、ほかの3方式が 10/10 になるよう設計しています。この結果は動作確認用です。
 
 ## モデル × RAG を一括比較する
 
@@ -39,11 +39,11 @@ python -m comparison.runner eval --dataset comparison/data/cases.jsonl --profile
 
 `recommend.py` は全組み合わせを採点し、比較結果と推奨設定を出力します。全件を採点できた組み合わせのうち、正答率が最も高いものを選びます。同率なら RAG なし、平均回答時間が短いもの、設定名順で決めます。全件を採点できた組み合わせがなければ、推奨設定は空になります。
 
-`answer_batch.py` は推奨設定と試験時と同じ TOML を読み込み、採点なしで質問に回答します。入力は `id` と `question` を持つ JSONL で、出力には質問と回答が入力順に並びます。失敗した質問にはエラー種別を記録します。既存の回答ファイルとの上書きを避けるため、再実行時は新しい出力ファイル名を指定します。
+`answer_batch.py` は推奨設定と試験時と同じ TOML を読み込み、採点なしで質問に回答します。入力は `id` と `question` を持つ CSV で、出力には質問と回答が入力順に並びます。失敗した質問にはエラー種別を記録します。既存の回答ファイルとの上書きを避けるため、再実行時は新しい出力ファイル名を指定します。
 
 ```powershell
-python -m comparison.recommend --dataset comparison/data/cases.jsonl --models mock_a mock_b --rag none external
-python -m answering.batch --recommendation answering/configs/recommended-YYYYMMDD-HHMMSS-mmmZ-ID.json --questions answering/data/questions.jsonl --output answering/outputs/answers.jsonl
+python -m comparison.recommend --dataset comparison/data/cases.csv --models mock_a mock_b --rag none external
+python -m answering.batch --recommendation answering/configs/recommended-YYYYMMDD-HHMMSS-mmmZ-ID.json --questions answering/data/questions.csv --output answering/outputs/answers.csv
 ```
 
 実 API で使う場合は両方のコマンドに `--config configs/live.local.toml` を追加します。試験側のモデル名は `--models openai claude` に変更します。
@@ -57,18 +57,18 @@ python -m answering.batch --recommendation answering/configs/recommended-YYYYMMD
 `compare` は、モデルと RAG 条件の全組み合わせを同じ質問セット・採点モデルで実行します。次のコマンドは2モデル × 2条件の4組を試します。
 
 ```powershell
-python -m comparison.runner compare --dataset comparison/data/cases.jsonl --models mock_a mock_b --rag none external
+python -m comparison.runner compare --dataset comparison/data/cases.csv --models mock_a mock_b --rag none external
 ```
 
 実サービスでは、`live.local.toml` の `[matrix.models]` に比較するモデルの別名と ID、`[matrix.retrievals]` に検索や直接入力の設定を記入します。必要な環境変数と `[judge]` を設定して実行します。
 
 ```powershell
-python -m comparison.runner --config configs/live.local.toml compare --dataset comparison/data/cases.jsonl --models openai claude --rag none external
+python -m comparison.runner --config configs/live.local.toml compare --dataset comparison/data/cases.csv --models openai claude --rag none external
 ```
 
 `--rag` の既定値は `none external` です。直接ファイル入力も並べるには `--rag none external direct` を指定します。MCP は既定で無効です。`[matrix.mcp]` を設定すると全組み合わせで同じツールを使います。
 
-端末には組み合わせごとの合格数、正答率、採点済み件数、エラー件数、平均回答時間が表示されます。平均回答時間には検索と MCP の時間を含み、回答を取得できたケースで集計します。ケース別の合否・使用量は同じ実行の JSONL で確認できます。
+端末には組み合わせごとの合格数、正答率、採点済み件数、エラー件数、平均回答時間が表示されます。平均回答時間には検索と MCP の時間を含み、回答を取得できたケースで集計します。ケース別の回答・合否・使用量は同じ実行の results.csv で確認できます。
 
 ## 実サービスを接続する
 
@@ -78,7 +78,7 @@ python -m comparison.runner --config configs/live.local.toml compare --dataset c
 4. 同じ質問セット、同じ採点モデルで比較します。まず `baseline direct`、検索の準備ができたら `direct search`、MCP は `baseline tool`、モデル変更は `direct claude_direct` を比較します。
 
 ```powershell
-python -m comparison.runner --config configs/live.local.toml eval --dataset comparison/data/cases.jsonl --profiles baseline direct
+python -m comparison.runner --config configs/live.local.toml eval --dataset comparison/data/cases.csv --profiles baseline direct
 ```
 
 ### 切り替え
@@ -91,6 +91,21 @@ python -m comparison.runner --config configs/live.local.toml eval --dataset comp
 質問は設定に応じて外部検索・MCP・モデルに送信されます。回答モデルには取得結果またはファイルが、採点モデルには質問・模範回答・候補回答が送信されます。接続前にデータの取り扱いを確認してください。初回の動作確認には同梱の架空データを使用できます。秘密値を設定・データセット・ツール引数に記入しないでください。
 
 ## 評価とログ
+
+### Excel・Google Sheets で扱う入出力
+
+質問入力はヘッダー付き CSV を使います。評価用は `id,question,reference,group`、回答用は `id,question` です。`group` は任意で空欄にできます。ID は文字列として読み込みます。表計算ソフトで先頭ゼロを保つ場合は、ID 列を文字列として取り込んでください。
+
+Excel では「CSV UTF-8」、Google Sheets では「カンマ区切り形式（.csv）」で保存してください。出力は UTF-8 BOM 付きで、カンマ・引用符・改行を含む回答も CSV の規則に従って保存します。
+
+比較を実行すると、詳細ログと同じフォルダに次の2ファイルが生成されます。
+
+- `実行ID-results.csv` に、質問・模範回答・生成回答・条件・合否・採点理由・時間・使用量・エラーを保存します。合否は `True` / `False`、採点不能は空欄です。
+- `実行ID-summary.csv` に、条件別の合格数・不合格数・エラー数・正答率・カバレッジ・平均回答時間を保存します。正答率とカバレッジは0〜1の値で、表計算ソフトでパーセント表示にできます。
+
+CSV には質問と回答の全文が保存されます。詳細な JSONL ログの本文保存は引き続き `--log-content` で指定できます。既存の JSONL 入力と回答出力も利用できます。推奨設定の受け渡しには JSON を使用します。
+
+統計比較は `--log` に `実行ID-results.csv` を指定できます。`--output comparison/runs/statistics.csv` を加えると統計レポートも CSV に保存できます。推奨設定と統計レポートの既存出力を再利用する場合は、新しいファイル名を指定してください。
 
 ### 評価の処理シーケンス
 
@@ -137,11 +152,11 @@ sequenceDiagram
 `compare_stats.py` は、同じ評価ランに含まれる2条件を質問 ID で対応させます。模範回答付きの質問セットを両条件に使い、採点モデル、回答指示、元資料を揃えてください。外部検索の効果だけを見たいときは、回答モデルも揃えます。
 
 ```powershell
-python -m comparison.runner --config configs/live.local.toml compare --dataset comparison/data/holdout.jsonl --models openai --rag external direct --logs comparison/runs/holdout
-python -m comparison.statistics --log "comparison/runs/holdout/<実行ログ名>.jsonl" --baseline openai/external --candidate openai/direct
+python -m comparison.runner --config configs/live.local.toml compare --dataset comparison/data/holdout.csv --models openai --rag external direct --logs comparison/runs/holdout
+python -m comparison.statistics --log "comparison/runs/holdout/<実行ID>-results.csv" --baseline openai/external --candidate openai/direct
 ```
 
-2行目の `--log` には、1行目の末尾に表示された JSONL のパスを指定します。標準出力は JSON です。`difference_pp` は候補の正答率から基準の正答率を引いた差（パーセントポイント）で、`pair_counts` には両方合格・改善・悪化・両方不合格の件数が出ます。100問中25問が改善し5問が悪化した場合は +20 ポイントです。
+2行目の `--log` には、1行目に表示された Results CSV のパスを指定します。標準出力は JSON で、`--output` を指定すると CSV にも保存できます。`difference_pp` は候補の正答率から基準の正答率を引いた差（パーセントポイント）で、`pair_counts` には両方合格・改善・悪化・両方不合格の件数が出ます。100問中25問が改善し5問が悪化した場合は +20 ポイントです。
 
 - **不確実性**は、対応ありブートストラップの95%信頼区間（`bootstrap.ci95_pp`）で確認できます。再標本化は既定で10,000回、乱数シードは42です。質問が互いに独立とみなせる場合は、両側の正確 McNemar 検定の p 値も出します。
 - **同じ規程やシナリオに由来する質問**には、データセットに共通の `"group":"incident-policy"` を付けてから評価します。ブートストラップはグループをまとめて再標本化し、グループ指定のない質問は各1単位として扱います。グループ付きのランでは、質問の独立性を仮定する McNemar 検定は省略します。独立した質問やグループが少ない場合や、改善・悪化がまれな場合は区間の精度が落ちます。再標本化で差が変動しない場合、区間は `null` になります。
