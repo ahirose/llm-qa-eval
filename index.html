@@ -120,8 +120,10 @@ tbody tr:last-child td { border-bottom: 0; }
 </section>
 <section data-page hidden>
 <h2>質問と模範解答のリストを指定してください</h2>
-<label>評価 CSV（id, question, reference） <input id="casesFile" type="file" accept=".csv"></label>
-<div class="actions"><button id="template">CSV テンプレートを保存</button><button id="sample">サンプルを読み込む</button></div>
+<p>評価 CSV（id, question, reference）</p>
+<div class="actions"><button id="template">CSVテンプレートを取得</button></div>
+<p class="actions"><button id="chooseCases">質問・模範解答ファイルを選択</button><button id="sample">サンプルを読み込む</button></p>
+<input id="casesFile" type="file" accept=".csv" hidden>
 <p id="caseStatus"></p><div class="scroll" id="preview"></div>
 </section>
 <section data-page hidden>
@@ -159,7 +161,7 @@ const samples = [{"id": "incident-contact", "question": "セキュリティイ�
 let cases = samples, documentText = "", results = [], page = 0, busy = false;
 const pages = [...document.querySelectorAll("[data-page]")];
 const status = message => { $("status").textContent = message; };
-const labels = ["1. AI モデル","2. 資料","3. システムプロンプト","4. 質問","5. 比較","6. 設定の保存と復元"];
+const labels = ["1. AI モデル","2. 回答時に参照する資料","3. システムプロンプト","4. 質問","5. 比較","6. 設定の保存と復元"];
 const providers = {
   openai: ["OpenAI", "https://api.openai.com/v1/responses"],
   claude: ["Claude", "https://api.anthropic.com/v1/messages"],
@@ -299,6 +301,7 @@ function csv(rows, protect = true) {
   }).join(",")).join("\r\n");
 }
 $("template").onclick = () => download("cases.csv","text/csv",csv([["id","question","reference"],...samples.map(row => [row.id,row.question,row.reference])],false));
+$("chooseCases").onclick = () => $("casesFile").click();
 $("sample").onclick = () => { cases = samples; $("casesFile").value = ""; preview(); status("サンプルを読み込みました。"); };
 $("casesFile").onchange = async event => {
   const file = event.target.files[0];
