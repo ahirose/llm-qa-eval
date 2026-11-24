@@ -131,6 +131,13 @@ tbody tr:last-child td { border-bottom: 0; }
 <label><select id="mode"><option value="sample">サンプルで試す</option><option value="live">登録した実サービスを使う</option></select></label>
 <p>登録済みの全モデルと、利用できる資料・Pinecone 検索の有無を組み合わせて比較します。</p>
 <label>同時に処理する質問数 <input id="concurrency" type="number" min="1" max="8" value="2"></label>
+<fieldset class="grid">
+  <legend>人が回答する場合の前提（変更可）</legend>
+  <label>正答率（%）<input id="humanAccuracy" type="number" min="0" max="100" step="any" value="95"></label>
+  <label>人件費（USD／時間）<input id="humanHourlyCost" type="number" min="0" step="any" value="25"></label>
+  <label>1問あたりの回答時間（分）<input id="humanMinutes" type="number" min="0.01" step="any" value="3"></label>
+</fieldset>
+<p class="muted">初期値は試算用の仮定です。自社の数値が分かれば置き換えてください。</p>
 <p class="muted">HTTP 429 が出る場合は、同時処理数を1に下げて試してください。</p>
 <label><input id="smoke" type="checkbox"> 最初の1問だけで試す</label>
 <p class="muted">実サービスでは質問・資料・認証情報を必要に応じて指定先に送信し、生成と採点に料金が発生します。サンプルは固定応答で、プロンプトの効果は実モデルで確認します。</p>
@@ -353,6 +360,46 @@ function costLabel(cost) {
   return cost > 0 && cost < 0.000001 ? "<0.000001" : cost.toFixed(6);
 }
 
+function compareRecommendations(first, second) {
+  return second.passed - first.passed
+    || (first.answerCost ?? Infinity) - (second.answerCost ?? Infinity)
+    || (first.seconds ?? Infinity) - (second.seconds ?? Infinity)
+    || 0;
+}
+
+function humanBaseline() {
+  const fields = ["humanAccuracy","humanHourlyCost","humanMinutes"];
+  const values = fields.map(field => $(field).value.trim());
+  const [accuracy,hourlyCost,minutes] = values.map(Number);
+  if (values.some(value => !value) || ![accuracy,hourlyCost,minutes].every(Number.isFinite) ||
+      accuracy < 0 || accuracy > 100 || hourlyCost < 0 || minutes <= 0) {
+    throw Error("人の正答率は0〜100%、人件費は0以上、回答時間は0より大きい値を入力してください。");
+  }
+  return {accuracy,hourlyCost,minutes};
+}
+
+function compareWithHuman(baseline, accuracy, meanSeconds, answerCost) {
+  const humanMinutes = baseline.minutes * 100;
+  const humanCost = baseline.hourlyCost * humanMinutes / 60;
+  const aiMinutes = meanSeconds === null ? null : meanSeconds * 100 / 60;
+  const aiCost = answerCost === null ? null : answerCost * 100;
+  return {humanMinutes,humanCost,aiMinutes,aiCost,qualityGap:accuracy - baseline.accuracy};
+}
+
+function humanComparisonText(comparison) {
+  const {humanMinutes,humanCost,aiMinutes,aiCost,qualityGap} = comparison;
+  const change = (human,ai,unit,digits) => {
+    if (ai === null) return "算出不可";
+    const difference = human - ai;
+    return human.toFixed(digits) + " → " + ai.toFixed(digits) + " " + unit
+      + "（" + (difference < 0 ? "増加 " : "削減 ") + Math.abs(difference).toFixed(digits) + " " + unit + "）";
+  };
+  const gap = (qualityGap > 0 ? "+" : "") + qualityGap.toFixed(1);
+  return "100問あたり：費用 " + change(humanCost,aiCost,"USD",4)
+    + " ｜ 時間 " + change(humanMinutes,aiMinutes,"分",1)
+    + " ｜ 正答率差 " + gap + " ポイント（AI − 人）";
+}
+
 async function generate(model,instructions,input,onCost = () => {}) {
   if (model.provider === "claude") {
     const result = await post(model.url,"",{
@@ -441,6 +488,7 @@ $("testSearch").onclick = () => action(async () => {
 });
 $("run").onclick = () => action(async () => {
   const live = $("mode").value === "live";
+  const baseline = live ? humanBaseline() : null;
   const selected = live ? models() : [{name:"サンプル A"},{name:"サンプル B"}];
   const judge = selected[Number($("judge").value)];
   const prompts = [["A",$("promptA").value.trim()],["B",$("promptB").value.trim()]].filter(([,value]) => value);
@@ -479,7 +527,6 @@ $("run").onclick = () => action(async () => {
   $("metricsNote").hidden = true;
   const failedQuestions = $("failedQuestions");
   failedQuestions.hidden = true;
-  let bestPassed = -1;
   let bestConditions = [];
   $("results").replaceChildren(); $("summary").replaceChildren(); $("download").disabled = true;
   const outcomes = new Array(total);
@@ -527,7 +574,7 @@ $("run").onclick = () => action(async () => {
     const cost = answerCost === null || judgeCost === null ? null : answerCost + judgeCost;
     const cells = [condition.join(" / "),...condition,row.id,row.question,row.reference,answer,
       verdict,reason,evidence,errorMessage,elapsed === null ? "" : elapsed.toFixed(3),costLabel(cost)];
-    outcomes[index] = {cells,elapsed,cost,verdict};
+    outcomes[index] = {cells,elapsed,cost,answerCost,verdict};
     activeStages.delete(index);
     updateStages();
     updateProgress(++completed);
@@ -557,12 +604,19 @@ $("run").onclick = () => action(async () => {
     const estimate = costLabel(costComplete ? totalCost : null);
     summary.push([...condition,graded ? (100*passed/graded).toFixed(1)+"%" : "—",
       passed,graded,errors,meanTime,estimate]);
-    if (graded === chosenCases.length && passed >= bestPassed) {
-      if (passed > bestPassed) bestConditions = [];
-      bestPassed = passed;
-      bestConditions.push({name:condition.join(" / "),meanTime,estimate});
+    if (graded === chosenCases.length) {
+      const answerCost = live && rows.every(row => row.answerCost !== null)
+        ? rows.reduce((sum,row) => sum + row.answerCost, 0) / rows.length : null;
+      const seconds = timed ? timeSum / timed : null;
+      const candidate = {name:condition.join(" / "),passed,answerCost,seconds,meanTime,estimate,
+        humanComparison: live ? compareWithHuman(baseline,100 * passed / graded,
+          seconds,answerCost) : null};
+      const order = bestConditions.length ? compareRecommendations(candidate,bestConditions[0]) : -1;
+      if (order < 0) bestConditions = [candidate];
+      else if (order === 0) bestConditions.push(candidate);
     }
   }
+  const bestPassed = bestConditions[0]?.passed;
   const title = document.createElement("h3");
   title.textContent = bestConditions.length ? "おすすめの組み合わせ" : "おすすめを判定できませんでした";
   const detail = document.createElement("p");
@@ -577,9 +631,32 @@ $("run").onclick = () => action(async () => {
     for (const condition of bestConditions) {
       const item = document.createElement("li");
       item.textContent = condition.name + " ｜ 平均回答 " + condition.meanTime + " 秒 ｜ LLM概算 " + condition.estimate + " USD";
+      if (condition.humanComparison) {
+        const comparison = document.createElement("p");
+        const comparisonTitle = document.createElement("strong");
+        comparisonTitle.textContent = "人が回答した場合との比較";
+        comparison.textContent = humanComparisonText(condition.humanComparison);
+        item.append(comparisonTitle,comparison);
+      }
       list.append(item);
     }
     recommendation.append(list);
+    if (live) {
+      const criteria = document.createElement("p");
+      criteria.className = "muted";
+      criteria.textContent = "選定順は、正答率 → 1問あたりの回答生成費用 → 平均回答時間です。同じ正答率では、費用を算出できた候補を先に評価します。";
+      recommendation.append(criteria);
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.textContent = "人の前提は正答率 " + baseline.accuracy + "%・時給 " + baseline.hourlyCost
+        + " USD・1問 " + baseline.minutes + " 分。AI 費用は回答生成のみ。採点・Pinecone・人による確認や手直しの費用は含みません。時間は各回答の合計です。";
+      recommendation.append(note);
+    } else {
+      const note = document.createElement("p");
+      note.className = "muted";
+      note.textContent = "人との比較は、実サービスで試験すると表示されます。";
+      recommendation.append(note);
+    }
   }
   recommendation.hidden = false;
   $("metricsNote").hidden = false;
@@ -609,7 +686,9 @@ $("save").onclick = async () => {
     const configuration = {version:1,models:models().map(({key,...model}) => model),
       judge:$("judge").value,pineconeHost:$("pineconeHost").value,
       pineconeNamespace:$("pineconeNamespace").value,pineconeField:$("pineconeField").value,topK:$("topK").value,
-      promptA:$("promptA").value,promptB:$("promptB").value};
+      promptA:$("promptA").value,promptB:$("promptB").value,
+      humanAccuracy:$("humanAccuracy").value,humanHourlyCost:$("humanHourlyCost").value,
+      humanMinutes:$("humanMinutes").value};
     if ($("includeSecrets").checked) {
       const phrase = $("passphrase").value;
       if (phrase.length < 12) throw Error("12文字以上のパスフレーズを入力してください。");
@@ -647,7 +726,8 @@ $("restore").onchange = async event => {
     $("models").replaceChildren();
     settings.models.forEach((model,i) => addModel({provider:model.provider,name:model.name,id:model.id,url:model.url,inputPrice:model.inputPrice,outputPrice:model.outputPrice,key:secrets.keys?.[i]}));
     if (settings.judge != null && Number(settings.judge) < models().length) $("judge").value = settings.judge;
-    const defaults = {pineconeHost:"",pineconeNamespace:"",pineconeField:"chunk_text"};
+    const defaults = {pineconeHost:"",pineconeNamespace:"",pineconeField:"chunk_text",
+      humanAccuracy:"95",humanHourlyCost:"25",humanMinutes:"3"};
     for (const [field,value] of Object.entries(defaults)) $(field).value = typeof settings[field] === "string" ? settings[field] : value;
     for (const field of ["topK","promptA","promptB"]) if (typeof settings[field] === "string") $(field).value = settings[field];
     $("pineconeKey").value = secrets.pineconeKey ?? "";
