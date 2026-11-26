@@ -94,7 +94,12 @@ tbody tr:last-child td { border-bottom: 0; }
 <div class="workspace">
 <p id="status" role="status" aria-live="polite"></p>
 <section data-page>
-<h2>利用するAIモデルの候補を指定してください</h2><p class="muted"><strong>設定情報は、このツールの配信サーバーに送信・保存されません。</strong> API キーは画面を閉じると消えます。あなたがお使いのPCに保存する場合は、手順6「設定の保存と復元」で「秘密情報も暗号化して保存」を選んでください。</p>
+<h2>利用するAIモデルの候補を指定してください</h2><p class="muted"><strong>設定情報は、このツールの配信サーバーに送信・保存されません。</strong> API キーは画面を閉じると消えます。あなたがお使いのPCに保存する場合は、手順6「設定の保存」で「秘密情報も暗号化して保存」を選んでください。</p>
+<fieldset>
+  <legend>保存済みの設定があれば、ここから復元してください</legend>
+  <label>設定 JSON を読み込む <input id="restore" type="file" accept=".json"></label>
+  <label>パスフレーズ（暗号化済みの設定を読み込む場合は、ファイル選択前に入力） <input id="restorePassphrase" type="password" autocomplete="off"></label>
+</fieldset>
 <div id="models"></div>
 <p class="muted">費用を計算する場合は、100万トークンあたりの入力・出力単価を USD で入力します。公式 OpenAI 接続先の GPT-6 Luna と GPT-6.2 Sol には標準単価の初期値があります。</p>
 <div class="actions"><button id="add">モデルを追加</button><button id="testModel">先頭モデルの接続を確認</button></div>
@@ -154,11 +159,10 @@ tbody tr:last-child td { border-bottom: 0; }
 <details id="failedQuestions" hidden><summary></summary><div class="scroll" id="failures"></div></details>
 <div class="scroll" id="results"></div>
 </section>
-<section data-page hidden><h2>設定の保存や、復元をしましょう</h2><p class="muted">設定はダウンロード先に保存されます。資料ファイルと質問 CSV は次回も選択してください。</p>
+<section data-page hidden><h2>設定を保存しましょう</h2><p class="muted">設定はダウンロード先に保存されます。資料ファイルと質問 CSV は次回も選択してください。</p>
 <label><input type="checkbox" id="includeSecrets"> 秘密情報も暗号化して保存</label>
-<label>パスフレーズ（暗号化・復元時） <input id="passphrase" type="password" autocomplete="off"></label>
+<label>パスフレーズ（暗号化して保存する場合） <input id="passphrase" type="password" autocomplete="off"></label>
 <button id="save">設定 JSON を保存</button>
-<label>設定 JSON を読み込む <input id="restore" type="file" accept=".json"></label>
 </section>
 <div class="actions step-actions"><button id="back">戻る</button><button id="next">次へ</button></div>
 </div>
@@ -170,7 +174,7 @@ const samples = [{"id": "incident-contact", "question": "セキュリティイ�
 let cases = samples, documentText = "", results = [], page = 0, busy = false;
 const pages = [...document.querySelectorAll("[data-page]")];
 const status = message => { $("status").textContent = message; };
-const labels = ["1. AI モデル","2. 回答時に参照する資料","3. システムプロンプト","4. 質問","5. 比較","6. 設定の保存と復元"];
+const labels = ["1. AI モデル","2. 回答時に参照する資料","3. システムプロンプト","4. 質問","5. 比較","6. 設定の保存"];
 const providers = {
   openai: ["OpenAI", "https://api.openai.com/v1/responses"],
   claude: ["Claude", "https://api.anthropic.com/v1/messages"],
@@ -714,7 +718,7 @@ $("restore").onchange = async event => {
       throw Error("このツールで保存した設定 JSON を選択してください。");
     let secrets = {};
     if (settings.encrypted) {
-      const phrase = $("passphrase").value;
+      const phrase = $("restorePassphrase").value;
       if (!phrase) throw Error("復元用パスフレーズを入力してください。");
       const {encrypted: {salt,iv,data}, ...configuration} = settings;
       try {
