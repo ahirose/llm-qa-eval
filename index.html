@@ -95,11 +95,14 @@ tbody tr:last-child td { border-bottom: 0; }
 <p id="status" role="status" aria-live="polite"></p>
 <section data-page>
 <h2>利用するAIモデルの候補を指定してください</h2><p class="muted"><strong>設定情報は、このツールの配信サーバーに送信・保存されません。</strong> API キーは画面を閉じると消えます。あなたがお使いのPCに保存する場合は、手順6「設定の保存」で「秘密情報も暗号化して保存」を選んでください。</p>
+<form id="restoreForm">
 <fieldset>
   <legend>保存済みの設定があれば、ここから復元してください</legend>
-  <label>設定 JSON を読み込む <input id="restore" type="file" accept=".json"></label>
-  <label>パスフレーズ（暗号化済みの設定を読み込む場合は、ファイル選択前に入力） <input id="restorePassphrase" type="password" autocomplete="off"></label>
+  <label>設定 JSON ファイルを選択 <input id="restore" type="file" accept=".json" required></label>
+  <label>パスフレーズ（暗号化済みの設定のみ） <input id="restorePassphrase" type="password" autocomplete="off"></label>
+  <button id="restoreSubmit" type="submit">設定を読み込む</button>
 </fieldset>
+</form>
 <div id="models"></div>
 <p class="muted">費用を計算する場合は、100万トークンあたりの入力・出力単価を USD で入力します。公式 OpenAI 接続先の GPT-6 Luna と GPT-6.2 Sol には標準単価の初期値があります。</p>
 <div class="actions"><button id="add">モデルを追加</button><button id="testModel">先頭モデルの接続を確認</button></div>
@@ -707,9 +710,12 @@ $("save").onclick = async () => {
     status("設定ファイルを書き出しました。");
   } catch (error) { status(error.message); }
 };
-$("restore").onchange = async event => {
-  const file = event.target.files[0];
-  if (!file) return;
+$("restoreForm").onsubmit = async event => {
+  event.preventDefault();
+  const file = $("restore").files[0];
+  const submit = $("restoreSubmit");
+  if (!file || submit.disabled) return;
+  submit.disabled = true;
   try {
     const settings = JSON.parse(await file.text());
     if (settings.version !== 1 || !Array.isArray(settings.models) || settings.models.some(
@@ -735,9 +741,11 @@ $("restore").onchange = async event => {
     for (const [field,value] of Object.entries(defaults)) $(field).value = typeof settings[field] === "string" ? settings[field] : value;
     for (const field of ["topK","promptA","promptB"]) if (typeof settings[field] === "string") $(field).value = settings[field];
     $("pineconeKey").value = secrets.pineconeKey ?? "";
+    $("restore").value = "";
+    $("restorePassphrase").value = "";
     status("設定を読み込みました。使用する前に接続先を確認してください。");
   } catch (error) { status(error.message); }
-  finally { event.target.value = ""; }
+  finally { submit.disabled = false; }
 };
 preview(); navigate(0);
 </script>
